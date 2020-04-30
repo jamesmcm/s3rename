@@ -17,13 +17,14 @@ mod args;
 use anyhow::{anyhow, Result};
 use args::ArgumentError;
 use core::str::FromStr;
+use futures::stream::StreamExt;
 use rusoto_core::Region;
 use rusoto_s3::{CopyObjectRequest, DeleteObjectsRequest};
 use rusoto_s3::{GetBucketLocationRequest, ListObjectsV2Request};
 use rusoto_s3::{S3Client, S3};
 use sedregex::ReplaceCommand;
 use structopt::StructOpt;
-
+use tokio::prelude::*;
 // TODO: Move me
 use thiserror::Error;
 #[derive(Error, Debug)]
@@ -114,7 +115,7 @@ async fn main() -> Result<(), anyhow::Error> {
     }?;
 
     // TODO Async
-    let futures_vec: Vec<_> = inner_keys
+    let mut futures: futures::stream::FuturesUnordered<_> = inner_keys
         .iter()
         .map(|x| {
             handle_key(
@@ -128,9 +129,9 @@ async fn main() -> Result<(), anyhow::Error> {
         })
         .collect();
 
-    for f in futures_vec {
-        f.await?
-    }
+    // futures.then(|_| Ok(()));
+    while let Some(handled) = futures.next().await {}
+
     // Naive approach:
     // List all keys in bucket with given prefix
     // Apply regex to all keys
