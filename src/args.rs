@@ -1,16 +1,8 @@
+use super::errors::ArgumentError;
+use core::str::FromStr;
 use regex::Regex;
 use sedregex::ReplaceCommand;
 use structopt::StructOpt;
-use thiserror::Error;
-
-use core::str::FromStr;
-#[derive(Error, Debug)]
-pub enum ArgumentError {
-    #[error("Invalid S3 URL: {url:?}, expected format: s3://bucket/optional-key-prefix")]
-    InvalidS3Url { url: String },
-    #[error("Could not determine bucket region for S3 bucket: s3://{bucket:?}, please specify with --aws-region")]
-    CouldNotDetermineBucketRegion { bucket: String },
-}
 
 fn parse_s3_prefix_url(src: &str) -> Result<S3Prefix, ArgumentError> {
     lazy_static! {

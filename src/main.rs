@@ -2,49 +2,40 @@
 // -n, --dry-run - only print changes
 // -q, --quiet - do not print key modifications
 // -i, --interactive - ask for overwrite (TODO later)
-// -o, --no-overwrite - do not overwrite keys if they exist (need to list target keys)
+// -o, --no-overwrite - do not overwrite keys if they exist (need to list target keys) (TODO later)
 // -v, --verbose - print debug messages
 //
 // TODO: Debug logging + verbose
 // TODO: Date modified filters
 // TODO: Encryption, ACL override, checksum checking
 // TODO: Allow choice between DeleteObject (as we copy) and DeleteObjects in bulk
+// TODO: Atomic CopyObject so we cannot end up with objects copied or data loss
+// TODO: Verify it runs on multiple threads
 #[macro_use]
 extern crate lazy_static;
 
 mod args;
+mod errors;
 
-use anyhow::{anyhow, Result};
-use args::ArgumentError;
+use anyhow::Result;
 use core::str::FromStr;
+use errors::ArgumentError;
+use errors::{ExpressionError, S3Error};
 use futures::stream::StreamExt;
 use rusoto_core::Region;
-use rusoto_s3::{CopyObjectRequest, DeleteObjectsRequest};
+use rusoto_s3::{CopyObjectRequest, DeleteObjectRequest}; // TODO: DeleteObjectsRequest
 use rusoto_s3::{GetBucketLocationRequest, ListObjectsV2Request};
 use rusoto_s3::{S3Client, S3};
 use sedregex::ReplaceCommand;
 use structopt::StructOpt;
-use tokio::prelude::*;
-// TODO: Move me
-use thiserror::Error;
-#[derive(Error, Debug)]
-pub enum S3Error {
-    #[error("Bucket is empty, or no matching prefixes: s3://{bucket}/{prefix}")]
-    EmptyBucket { bucket: String, prefix: String },
-}
 
-#[derive(Error, Debug)]
-pub enum ExpressionError {
-    #[error("Could not parse expression: {expression}, error: {error:?}")]
-    SedRegexParseError {
-        expression: String,
-        error: sedregex::ErrorKind,
-    },
-}
+// TODO: Move me
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let opt = args::App::from_args();
-    println!("{:?}", opt);
+    if opt.verbose {
+        dbg!("{:?}", &opt);
+    }
     let client = S3Client::new(opt.aws_region.clone().unwrap_or(Region::UsEast1)); //TODO: Try to get region from AWS config too - does Rusoto provide this?
 
     let bucket_region: Option<Region> = match client
@@ -56,7 +47,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .map(|x| Region::from_str(&x))
     {
         None => None,
-        Some(Err(err)) => None, // TODO: Return error here
+        Some(Err(_err)) => None, // TODO: Maybe return error here? Rather than silently ignoring bucket region failure
         Some(Ok(aws_region)) => Some(aws_region),
     };
 
@@ -68,13 +59,15 @@ async fn main() -> Result<(), anyhow::Error> {
         }),
     }?;
 
-    dbg!(&target_region);
+    if opt.verbose {
+        dbg!(&target_region);
+    }
     let client = S3Client::new(target_region); //TODO: Try to get region from AWS config too - does Rusoto provide this?
 
     // TODO Loop checking if truncated here, for buckets with >10k files
     let objects_inner = match client
         .list_objects_v2(ListObjectsV2Request {
-            bucket: opt.s3_url.bucket.clone(), //TODO: fix clone?
+            bucket: opt.s3_url.bucket.clone(), //TODO: fix clone in Rusoto requests?
             continuation_token: None,
             delimiter: None,
             encoding_type: None,
@@ -105,7 +98,9 @@ async fn main() -> Result<(), anyhow::Error> {
         .map(|x| x.key.unwrap())
         .collect();
 
-    println!("{:?}", inner_keys);
+    if opt.verbose {
+        dbg!("{:?}", &inner_keys);
+    }
     let replace_command = match ReplaceCommand::new(&opt.expr) {
         Ok(x) => Ok(x),
         Err(err) => Err(ExpressionError::SedRegexParseError {
@@ -114,7 +109,6 @@ async fn main() -> Result<(), anyhow::Error> {
         }),
     }?;
 
-    // TODO Async
     let mut futures: futures::stream::FuturesUnordered<_> = inner_keys
         .iter()
         .map(|x| {
@@ -129,24 +123,12 @@ async fn main() -> Result<(), anyhow::Error> {
         })
         .collect();
 
-    // futures.then(|_| Ok(()));
-    while let Some(handled) = futures.next().await {}
+    while let Some(_handled) = futures.next().await {}
 
-    // Naive approach:
-    // List all keys in bucket with given prefix
-    // Apply regex to all keys
-    // Filter for keys that have changed
-    // Make PutObject requests for these keys
-    //
-    // Improvements:
-    // Can we filter given pattern (i.e. if the replace pattern has a prefix, append that to existing
-    // prefix?
-    //
-    // Set up thread pool with Tokio
     Ok(())
 }
 
-// TODO: Thread safe, key could be moved - replace_command should be shared
+// TODO: Does this actually work on multiple threads?
 async fn handle_key(
     client: &S3Client,
     bucket: &str,
@@ -155,7 +137,6 @@ async fn handle_key(
     dry_run: bool,
     quiet: bool,
 ) -> Result<(), anyhow::Error> {
-    // TODO move allocation outside, move in closure
     let newkey = replace_command.execute(key);
     if !quiet {
         println!("Renaming {} to {}", key, newkey);
@@ -203,7 +184,21 @@ async fn handle_key(
         website_redirect_location: None,
     };
 
-    match client.copy_object(copy_request).await {
+    let _copy_response = match client.copy_object(copy_request).await {
+        Ok(_) => Ok(()),
+        Err(x) => Err(anyhow::Error::from(x)),
+    }?;
+
+    let delete_request = DeleteObjectRequest {
+        bucket: String::from(bucket),
+        bypass_governance_retention: None,
+        key: String::from(key),
+        mfa: None, // TODO: Required to delete if MFA and versioning enabled
+        request_payer: None,
+        version_id: None,
+    };
+
+    match client.delete_object(delete_request).await {
         Ok(_) => Ok(()),
         Err(x) => Err(anyhow::Error::from(x)),
     }
