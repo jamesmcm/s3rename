@@ -93,14 +93,27 @@ $ aws s3 ls s3://s3rename-test-bucket/datatest --recursive
 Note the requirement to use named capture groups, this will be addressed
 in a future version to allow numbered anonymous capture groups like sed.
 
+## Installation
+
+### Cargo
+
+s3rename can be installed via Cargo from this cloned repository:
+
+```
+$ cd s3rename
+$ cargo install --path .
+```
+
+The `s3rename` binary will then be in your Cargo binaries directory (and
+this should already be on your `$PATH`.
+
 ## Known Issues
 
-* Currently the rename operation is not atomic (since it involves
+* The rename operation is not fully atomic (since it involves
   separate CopyObject and DeleteObject requests) - this means that if
-  s3rename is terminated during operation, the bucket could be left with
+  s3rename is terminated suddenly during operation, the bucket could be left with
   copied files where the originals have not been renamed (re-running
-  s3rename with the same arguments would fix this). This will be
-  addressed in a future version.
+  s3rename with the same arguments would fix this). 
 * s3rename does not work with encrypted buckets (either by KMS or S3
   encryption) - this support will be added in a future version.
 * Object ACLs (Access Control Lists) are currently overwritten, so all

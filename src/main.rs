@@ -9,13 +9,15 @@
 // TODO: Date modified filters
 // TODO: Encryption, ACL override, checksum checking
 // TODO: Allow choice between DeleteObject (as we copy) and DeleteObjects in bulk
-// TODO: Atomic CopyObject so we cannot end up with objects copied or data loss
 // TODO: Verify it runs on multiple threads
 #[macro_use]
 extern crate lazy_static;
-
 mod args;
 mod errors;
+mod wrapped_copy;
+
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::Result;
 use core::str::FromStr;
@@ -23,13 +25,13 @@ use errors::ArgumentError;
 use errors::{ExpressionError, S3Error};
 use futures::stream::StreamExt;
 use rusoto_core::Region;
-use rusoto_s3::{CopyObjectRequest, DeleteObjectRequest}; // TODO: DeleteObjectsRequest
+use rusoto_s3::CopyObjectRequest;
 use rusoto_s3::{GetBucketLocationRequest, ListObjectsV2Request};
 use rusoto_s3::{S3Client, S3};
 use sedregex::ReplaceCommand;
 use structopt::StructOpt;
+use wrapped_copy::WrappedCopyRequest;
 
-// TODO: Move me
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let opt = args::App::from_args();
@@ -62,44 +64,64 @@ async fn main() -> Result<(), anyhow::Error> {
     if opt.verbose {
         dbg!(&target_region);
     }
-    let client = S3Client::new(target_region); //TODO: Try to get region from AWS config too - does Rusoto provide this?
+    let client = Arc::new(S3Client::new(target_region)); //TODO: Try to get region from AWS config too - does Rusoto provide this?
 
-    // TODO Loop checking if truncated here, for buckets with >10k files
-    let objects_inner = match client
-        .list_objects_v2(ListObjectsV2Request {
-            bucket: opt.s3_url.bucket.clone(), //TODO: fix clone in Rusoto requests?
-            continuation_token: None,
-            delimiter: None,
-            encoding_type: None,
-            fetch_owner: None,
-            max_keys: None,
-            prefix: opt.s3_url.key_prefix.clone(),
-            request_payer: None,
-            start_after: None,
-        })
-        .await?
-        .contents
-    {
-        // TODO: Do we really want to return an error on no matching keys?
-        None => Err(S3Error::EmptyBucket {
-            bucket: opt.s3_url.bucket.clone(),
-            prefix: if let Some(prefix) = opt.s3_url.key_prefix.clone() {
-                prefix
-            } else {
-                String::new()
-            },
-        }),
-        Some(x) => Ok(x),
-    }?;
+    // Collect all keys under prefix to this Vec (can we avoid this allocation)?
+    let mut keys_vec = Vec::new(); // Can we use metadata request to estimate size here?
+    let mut continuation_token = None;
 
-    let inner_keys: Vec<String> = objects_inner
-        .into_iter()
-        .filter(|x| x.key.is_some())
-        .map(|x| x.key.unwrap())
-        .collect();
+    loop {
+        // Here we loop until we are told that the request was not truncated (i.e. we have seen all
+        // keys)
+        let response = client
+            .list_objects_v2(ListObjectsV2Request {
+                bucket: opt.s3_url.bucket.clone(), //TODO: fix clone in Rusoto requests?
+                continuation_token,
+                delimiter: None,
+                encoding_type: None,
+                fetch_owner: None,
+                max_keys: None,
+                prefix: opt.s3_url.key_prefix.clone(),
+                request_payer: None,
+                start_after: None,
+            })
+            .await?;
+
+        // Set new continuation_token from response
+        continuation_token = response.continuation_token.clone();
+
+        let objects_inner = match response.contents {
+            // TODO: Do we really want to return an error on no matching keys?
+            None => Err(S3Error::EmptyBucket {
+                bucket: opt.s3_url.bucket.clone(),
+                prefix: if let Some(prefix) = opt.s3_url.key_prefix.clone() {
+                    prefix
+                } else {
+                    String::new()
+                },
+            }),
+            Some(x) => Ok(x),
+        }?;
+
+        // Get keys out of response
+        let objects_inner = objects_inner
+            .iter()
+            .filter(|x| x.key.is_some())
+            .map(|x| x.key.clone().unwrap());
+
+        keys_vec.extend(objects_inner);
+
+        // Break loop if keys were not truncated (i.e. no more keys)
+        match response.is_truncated {
+            Some(true) => {}
+            _ => {
+                break;
+            }
+        }
+    }
 
     if opt.verbose {
-        dbg!("{:?}", &inner_keys);
+        dbg!("{:?}", &keys_vec);
     }
     let replace_command = match ReplaceCommand::new(&opt.expr) {
         Ok(x) => Ok(x),
@@ -109,35 +131,50 @@ async fn main() -> Result<(), anyhow::Error> {
         }),
     }?;
 
-    let mut futures: futures::stream::FuturesUnordered<_> = inner_keys
+    let destructor_futures = Arc::new(Mutex::new(futures::stream::FuturesUnordered::new()));
+
+    let mut futures: futures::stream::FuturesUnordered<_> = keys_vec
         .iter()
         .map(|x| {
             handle_key(
-                &client,
+                client.clone(),
                 &opt.s3_url.bucket,
                 x,
                 &replace_command,
                 opt.dry_run,
                 opt.quiet,
+                opt.verbose,
+                destructor_futures.clone(),
             )
         })
         .collect();
 
     while let Some(_handled) = futures.next().await {}
 
+    // Does Mutex make sense?
+    while let Some(_handled) = destructor_futures.lock().unwrap().next().await {}
+
     Ok(())
 }
 
 // TODO: Does this actually work on multiple threads?
 async fn handle_key(
-    client: &S3Client,
+    client: Arc<S3Client>,
     bucket: &str,
     key: &str,
     replace_command: &ReplaceCommand<'_>,
     dry_run: bool,
-    quiet: bool,
+    quiet: bool, // TODO: Refactor these args in to a Copy struct
+    verbose: bool,
+    destructor_futures: Arc<Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), anyhow::Error> {
     let newkey = replace_command.execute(key);
+    if newkey == key {
+        if verbose {
+            println!("Skipping {} since key did not change", key);
+        }
+        return Ok(());
+    }
     if !quiet {
         println!("Renaming {} to {}", key, newkey);
     }
@@ -184,22 +221,14 @@ async fn handle_key(
         website_redirect_location: None,
     };
 
-    let _copy_response = match client.copy_object(copy_request).await {
-        Ok(_) => Ok(()),
-        Err(x) => Err(anyhow::Error::from(x)),
-    }?;
+    let _copy_response: WrappedCopyRequest = WrappedCopyRequest::new(
+        client.clone(),
+        copy_request,
+        String::from(key),
+        verbose,
+        destructor_futures.clone(),
+    )
+    .await?;
 
-    let delete_request = DeleteObjectRequest {
-        bucket: String::from(bucket),
-        bypass_governance_retention: None,
-        key: String::from(key),
-        mfa: None, // TODO: Required to delete if MFA and versioning enabled
-        request_payer: None,
-        version_id: None,
-    };
-
-    match client.delete_object(delete_request).await {
-        Ok(_) => Ok(()),
-        Err(x) => Err(anyhow::Error::from(x)),
-    }
+    Ok(())
 }
