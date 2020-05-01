@@ -113,13 +113,10 @@ in a future version to allow numbered anonymous capture groups like sed.
 * There is no way of filtering keys to be renamed based on their date
   modified, etc. - this will be addressed in a future version.
 
-s3rename uses CopyObject and DeleteObject(s) requests directly, this
-means that 
-
 ## S3 Billing
 
 s3rename operates on keys within the same bucket and so should trigger
-no data transfer costs.
+no [data transfer costs](https://aws.amazon.com/s3/pricing/).
 
 Whilst it does use CopyObjectRequests to carry out the renaming, the
 additional data does not exist for long and should trigger no costs for
