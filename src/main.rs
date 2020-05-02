@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::Result;
+use args::CannedACL;
 use core::str::FromStr;
 use errors::ArgumentError;
 use errors::{ExpressionError, S3Error};
@@ -138,6 +139,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 opt.quiet,
                 opt.verbose,
                 opt.no_preserve_properties,
+                opt.canned_acl,
                 destructor_futures.clone(),
             )
         })
@@ -161,6 +163,7 @@ async fn handle_key(
     quiet: bool, // TODO: Refactor these args in to a Copy struct
     verbose: bool,
     no_preserve_properties: bool,
+    canned_acl: Option<CannedACL>,
     destructor_futures: Arc<Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), anyhow::Error> {
     let newkey = replace_command.execute(&key.0);
@@ -196,7 +199,7 @@ async fn handle_key(
             };
             let head_result = client.head_object(head_request).await?;
             CopyObjectRequest {
-                acl: None,
+                acl: canned_acl.map(|x| x.to_string()),
                 bucket: String::from(bucket),
                 cache_control: head_result.cache_control,
                 content_disposition: head_result.content_disposition,
@@ -237,7 +240,7 @@ async fn handle_key(
             }
         }
         true => CopyObjectRequest {
-            acl: None,
+            acl: canned_acl.map(|x| x.to_string()),
             bucket: String::from(bucket),
             cache_control: None,
             content_disposition: None,

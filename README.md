@@ -33,6 +33,9 @@ FLAGS:
 
 OPTIONS:
         --aws-region <aws-region>    AWS Region (will be taken from bucket region if not overridden here)
+        --canned-acl <canned-acl>    Canned access_control_list override - sets this ACL for all renamed keys [possible
+                                     values: private, public-read, public-read-write, aws-exec-read, authenticated-read,
+                                     bucket-owner-read, bucket-owner-full-control]
 
 ARGS:
     <expr>      Perl RegEx Replace Expression (only s/target/replacement/flags form supported)
@@ -57,6 +60,11 @@ $ aws s3 ls s3://s3rename-test-bucket --recursive
 
 The `--dry-run` flag will print changes to be made without carrying them
 out. This is __highly__ recommended before running changes.
+
+The `--canned-acl <canned-acl>` option can be used to set the ACL of all
+renamed objects to the provided [canned ACL](https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html#canned-acl).
+Note that some canned ACLs are affected by bucket settings (such as
+`public-read-write`).
 
 ### Renaming flat files to a nested directory structure for AWS Glue
 
@@ -121,7 +129,8 @@ this should already be on your `$PATH`.
 
 * [Object ACLs](https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html) 
   (Access Control Lists) are currently overwritten, so all objects 
-  renamed will be set to Private. This will be addressed in a
+  renamed will be set to Private by default (or the ACL specified with
+  --canned-acl). This will be addressed in a
   future version.
 * Buckets and objects using [S3 Object
   Lock](https://docs.aws.amazon.com/AmazonS3/latest/dev/object-lock-overview.html)

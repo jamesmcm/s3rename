@@ -21,4 +21,9 @@ pub enum ArgumentError {
     InvalidS3Url { url: String },
     #[error("Could not determine bucket region for S3 bucket: s3://{bucket:?}, please specify with --aws-region")]
     CouldNotDetermineBucketRegion { bucket: String },
+    #[error("Invalid Canned ACL string provided: {s}, must be in {possible_strings:?}")]
+    InvalidCannedACL {
+        s: String,
+        possible_strings: &'static [&'static str],
+    },
 }

@@ -1,8 +1,57 @@
 use super::errors::ArgumentError;
 use core::str::FromStr;
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
 use regex::Regex;
 use sedregex::ReplaceCommand;
 use structopt::StructOpt;
+
+#[derive(Debug, FromPrimitive, Clone, Copy)]
+pub enum CannedACL {
+    Private,
+    PublicRead,
+    PublicReadWrite,
+    AWSExecRead,
+    AuthenticatedRead,
+    BucketOwnerRead,
+    BucketOwnerFullControl,
+}
+
+impl CannedACL {
+    pub fn possible_strings() -> &'static [&'static str] {
+        &[
+            "private",
+            "public-read",
+            "public-read-write",
+            "aws-exec-read",
+            "authenticated-read",
+            "bucket-owner-read",
+            "bucket-owner-full-control",
+        ][..]
+    }
+}
+
+impl FromStr for CannedACL {
+    type Err = ArgumentError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        for (i, t) in CannedACL::possible_strings().iter().enumerate() {
+            if *t == s {
+                return Ok(FromPrimitive::from_usize(i).unwrap());
+            }
+        }
+        Err(Self::Err::InvalidCannedACL {
+            s: String::from(s),
+            possible_strings: CannedACL::possible_strings(),
+        })
+    }
+}
+
+impl ToString for CannedACL {
+    fn to_string(&self) -> String {
+        String::from(CannedACL::possible_strings()[*self as usize])
+    }
+}
 
 fn parse_s3_prefix_url(src: &str) -> Result<S3Prefix, ArgumentError> {
     lazy_static! {
@@ -73,4 +122,8 @@ pub struct App {
     /// AWS Region (will be taken from bucket region if not overridden here)
     #[structopt(long, parse(try_from_str = rusoto_core::Region::from_str))]
     pub aws_region: Option<rusoto_core::Region>,
+
+    /// Canned access_control_list override - sets this ACL for all renamed keys
+    #[structopt(long, possible_values = CannedACL::possible_strings(), parse(try_from_str = CannedACL::from_str))]
+    pub canned_acl: Option<CannedACL>,
 }
