@@ -1,15 +1,3 @@
-// s3rename expr s3://bucket/key-prefix
-// -n, --dry-run - only print changes
-// -q, --quiet - do not print key modifications
-// -i, --interactive - ask for overwrite (TODO later)
-// -o, --no-overwrite - do not overwrite keys if they exist (need to list target keys) (TODO later)
-// -v, --verbose - print debug messages
-//
-// TODO: Debug logging + verbose
-// TODO: Date modified filters
-// TODO: Encryption, ACL override, checksum checking
-// TODO: Allow choice between DeleteObject (as we copy) and DeleteObjects in bulk
-// TODO: Verify it runs on multiple threads
 #[macro_use]
 extern crate lazy_static;
 mod args;
@@ -25,7 +13,7 @@ use errors::ArgumentError;
 use errors::{ExpressionError, S3Error};
 use futures::stream::StreamExt;
 use rusoto_core::Region;
-use rusoto_s3::CopyObjectRequest;
+use rusoto_s3::{CopyObjectRequest, HeadObjectRequest};
 use rusoto_s3::{GetBucketLocationRequest, ListObjectsV2Request};
 use rusoto_s3::{S3Client, S3};
 use sedregex::ReplaceCommand;
@@ -42,14 +30,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let bucket_region: Option<Region> = match client
         .get_bucket_location(GetBucketLocationRequest {
-            bucket: opt.s3_url.bucket.clone(), //TODO: fix clone?
+            bucket: opt.s3_url.bucket.clone(),
         })
         .await?
         .location_constraint
         .map(|x| Region::from_str(&x))
     {
         None => None,
-        Some(Err(_err)) => None, // TODO: Maybe return error here? Rather than silently ignoring bucket region failure
+        Some(Err(_err)) => None, // Note we ignore failure to get bucket region
         Some(Ok(aws_region)) => Some(aws_region),
     };
 
@@ -64,7 +52,7 @@ async fn main() -> Result<(), anyhow::Error> {
     if opt.verbose {
         dbg!(&target_region);
     }
-    let client = Arc::new(S3Client::new(target_region)); //TODO: Try to get region from AWS config too - does Rusoto provide this?
+    let client = Arc::new(S3Client::new(target_region));
 
     // Collect all keys under prefix to this Vec (can we avoid this allocation)?
     let mut keys_vec = Vec::new(); // Can we use metadata request to estimate size here?
@@ -75,7 +63,7 @@ async fn main() -> Result<(), anyhow::Error> {
         // keys)
         let response = client
             .list_objects_v2(ListObjectsV2Request {
-                bucket: opt.s3_url.bucket.clone(), //TODO: fix clone in Rusoto requests?
+                bucket: opt.s3_url.bucket.clone(),
                 continuation_token,
                 delimiter: None,
                 encoding_type: None,
@@ -91,7 +79,7 @@ async fn main() -> Result<(), anyhow::Error> {
         continuation_token = response.continuation_token.clone();
 
         let objects_inner = match response.contents {
-            // TODO: Do we really want to return an error on no matching keys?
+            // Note we return an error on no matching keys, may want to succeed silently
             None => Err(S3Error::EmptyBucket {
                 bucket: opt.s3_url.bucket.clone(),
                 prefix: if let Some(prefix) = opt.s3_url.key_prefix.clone() {
@@ -105,9 +93,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
         // Get keys out of response
         let objects_inner = objects_inner
-            .iter()
+            .into_iter()
             .filter(|x| x.key.is_some())
-            .map(|x| x.key.clone().unwrap());
+            .map(|x| (x.key.unwrap(), x.storage_class))
+            .filter(|x| x.0.chars().last().unwrap() != '/'); // Skip "directory" keys - TODO: check issues regarding empty directories
 
         keys_vec.extend(objects_inner);
 
@@ -131,6 +120,10 @@ async fn main() -> Result<(), anyhow::Error> {
         }),
     }?;
 
+    // Used to store futures returned from destructors (so we do not terminate until destructors
+    // have finished) - this pseudo-async destructor setup might violate atomicity (since a
+    // terminate request will guarantee destructors run but not that the spawned async DeleteObject
+    // requests finish) - TODO: Verify this and consider synchronous destructors
     let destructor_futures = Arc::new(Mutex::new(futures::stream::FuturesUnordered::new()));
 
     let mut futures: futures::stream::FuturesUnordered<_> = keys_vec
@@ -144,6 +137,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 opt.dry_run,
                 opt.quiet,
                 opt.verbose,
+                opt.no_preserve_properties,
                 destructor_futures.clone(),
             )
         })
@@ -161,70 +155,132 @@ async fn main() -> Result<(), anyhow::Error> {
 async fn handle_key(
     client: Arc<S3Client>,
     bucket: &str,
-    key: &str,
+    key: &(String, Option<String>),
     replace_command: &ReplaceCommand<'_>,
     dry_run: bool,
     quiet: bool, // TODO: Refactor these args in to a Copy struct
     verbose: bool,
+    no_preserve_properties: bool,
     destructor_futures: Arc<Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), anyhow::Error> {
-    let newkey = replace_command.execute(key);
-    if newkey == key {
+    let newkey = replace_command.execute(&key.0);
+    if newkey == key.0 {
         if verbose {
-            println!("Skipping {} since key did not change", key);
+            println!("Skipping {:?} since key did not change", key);
         }
         return Ok(());
     }
     if !quiet {
-        println!("Renaming {} to {}", key, newkey);
+        println!("Renaming {} to {}", key.0, newkey);
     }
     if dry_run {
         return Ok(());
     }
-    let copy_request = CopyObjectRequest {
-        acl: None,
-        bucket: String::from(bucket),
-        cache_control: None, //TODO
-        content_disposition: None,
-        content_encoding: None,
-        content_language: None,
-        content_type: None,
-        copy_source: format!("{}/{}", bucket, key), //TODO URL Encoding
-        copy_source_if_match: None,
-        copy_source_if_modified_since: None,
-        copy_source_if_none_match: None,
-        copy_source_if_unmodified_since: None,
-        copy_source_sse_customer_algorithm: None,
-        copy_source_sse_customer_key: None,
-        copy_source_sse_customer_key_md5: None,
-        expires: None,
-        grant_full_control: None,
-        grant_read: None,
-        grant_read_acp: None,
-        grant_write_acp: None,
-        key: String::from(newkey.to_owned()),
-        metadata: None,
-        metadata_directive: Some(String::from("COPY")),
-        object_lock_legal_hold_status: None,
-        object_lock_mode: None,
-        object_lock_retain_until_date: None,
-        request_payer: None,
-        sse_customer_algorithm: None,
-        sse_customer_key: None,
-        sse_customer_key_md5: None,
-        ssekms_encryption_context: None,
-        ssekms_key_id: None,          //TODO
-        server_side_encryption: None, //TODO
-        storage_class: None,          //TODO
-        tagging: None,
-        tagging_directive: None,
-        website_redirect_location: None,
+
+    let copy_request = match no_preserve_properties {
+        false => {
+            let head_request = HeadObjectRequest {
+                bucket: String::from(bucket),
+                if_match: None,
+                if_modified_since: None,
+                if_none_match: None,
+                if_unmodified_since: None,
+                key: key.0.clone(),
+                part_number: None,
+                range: None,
+                request_payer: None,
+                sse_customer_algorithm: None, // Seems we can get metadata for Copy without this
+                sse_customer_key: None,
+                sse_customer_key_md5: None,
+                version_id: None,
+            };
+            let head_result = client.head_object(head_request).await?;
+            CopyObjectRequest {
+                acl: None,
+                bucket: String::from(bucket),
+                cache_control: head_result.cache_control,
+                content_disposition: head_result.content_disposition,
+                content_encoding: head_result.content_encoding,
+                content_language: head_result.content_language,
+                content_type: head_result.content_type,
+                copy_source: format!("{}/{}", bucket, key.0),
+                copy_source_if_match: None,
+                copy_source_if_modified_since: None,
+                copy_source_if_none_match: None,
+                copy_source_if_unmodified_since: None,
+                copy_source_sse_customer_algorithm: head_result.sse_customer_algorithm.clone(),
+                copy_source_sse_customer_key: None, //TODO
+                copy_source_sse_customer_key_md5: head_result.sse_customer_key_md5.clone(),
+                expires: head_result.expires,
+                grant_full_control: None, //TODO
+                grant_read: None,
+                grant_read_acp: None,
+                grant_write_acp: None,
+                key: String::from(newkey.to_owned()),
+                metadata: head_result.metadata,
+                metadata_directive: Some(String::from("REPLACE")), // Set to REPLACE due to
+                // multi-part copies: https://docs.aws.amazon.com/cli/latest/reference/s3/cp.html
+                object_lock_legal_hold_status: head_result.object_lock_legal_hold_status,
+                object_lock_mode: head_result.object_lock_mode,
+                object_lock_retain_until_date: head_result.object_lock_retain_until_date,
+                request_payer: head_result.request_charged, // TODO: Test me
+                sse_customer_algorithm: head_result.sse_customer_algorithm.clone(),
+                sse_customer_key: None, // TODO
+                sse_customer_key_md5: head_result.sse_customer_key_md5.clone(),
+                ssekms_encryption_context: None, // TODO
+                ssekms_key_id: head_result.ssekms_key_id,
+                server_side_encryption: head_result.server_side_encryption,
+                storage_class: key.1.clone(),
+                tagging: None, // tagging_directive should cover this anyway
+                tagging_directive: Some(String::from("COPY")),
+                website_redirect_location: head_result.website_redirect_location,
+            }
+        }
+        true => CopyObjectRequest {
+            acl: None,
+            bucket: String::from(bucket),
+            cache_control: None,
+            content_disposition: None,
+            content_encoding: None,
+            content_language: None,
+            content_type: None,
+            copy_source: format!("{}/{}", bucket, key.0),
+            copy_source_if_match: None,
+            copy_source_if_modified_since: None,
+            copy_source_if_none_match: None,
+            copy_source_if_unmodified_since: None,
+            copy_source_sse_customer_algorithm: None,
+            copy_source_sse_customer_key: None,
+            copy_source_sse_customer_key_md5: None,
+            expires: None,
+            grant_full_control: None,
+            grant_read: None,
+            grant_read_acp: None,
+            grant_write_acp: None,
+            key: String::from(newkey.to_owned()),
+            metadata: None,
+            metadata_directive: Some(String::from("COPY")),
+            object_lock_legal_hold_status: None,
+            object_lock_mode: None,
+            object_lock_retain_until_date: None,
+            request_payer: None,
+            sse_customer_algorithm: None,
+            sse_customer_key: None,
+            sse_customer_key_md5: None,
+            ssekms_encryption_context: None,
+            ssekms_key_id: None,
+            server_side_encryption: None,
+            storage_class: key.1.clone(),
+            tagging: None,
+            tagging_directive: Some(String::from("COPY")),
+            website_redirect_location: None,
+        },
     };
 
     let _copy_response: WrappedCopyRequest = WrappedCopyRequest::new(
         client.clone(),
         copy_request,
-        String::from(key),
+        key.0.clone(),
         verbose,
         destructor_futures.clone(),
     )

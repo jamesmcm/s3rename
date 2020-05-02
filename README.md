@@ -8,18 +8,28 @@ GNU/Linux (also known as `prename` and `perl-rename`).
 s3rename uses asynchronous requests to rename the keys in parallel, as
 fast as possible.
 
+Object properties are preserved, unless the `--no-preserve-properties` 
+flag is
+used.
+
 ## Usage
+
+Note that regardless of the prefix used for filtering in the S3 URL
+provided, the regex is applied to the __whole key__. This is necessary
+to allow for full changes of the directory structure.
 
 ```
 USAGE:
     s3rename [FLAGS] [OPTIONS] <expr> <s3-url>
 
 FLAGS:
-    -n, --dry-run    Do not carry out modifications (only print)
-    -h, --help       Prints help information
-    -q, --quiet      Do not print key modifications
-    -V, --version    Prints version information
-    -v, --verbose    Print debug messages
+    -n, --dry-run                   Do not carry out modifications (only print)
+    -h, --help                      Prints help information
+        --no-preserve-properties    Do not preserve object properties (saves retrieving per-object details) - using this
+                                    flag will remove any encryption
+    -q, --quiet                     Do not print key modifications
+    -V, --version                   Prints version information
+    -v, --verbose                   Print debug messages
 
 OPTIONS:
         --aws-region <aws-region>    AWS Region (will be taken from bucket region if not overridden here)
@@ -109,22 +119,25 @@ this should already be on your `$PATH`.
 
 ## Known Issues
 
+* [Object ACLs](https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html) 
+  (Access Control Lists) are currently overwritten, so all objects 
+  renamed will be set to Private. This will be addressed in a
+  future version.
+* Buckets and objects using [S3 Object
+  Lock](https://docs.aws.amazon.com/AmazonS3/latest/dev/object-lock-overview.html)
+  are currently unsupported.
+* Expiry rules set with prefixes in the bucket properties will not be 
+  updated (so any keys moved out of the scope of these rules will no
+  longer have the expiry rules applied). In the future a specific
+  command to update expiry rules may be added.
+* s3rename does not support custom keys for encrypted buckets (i.e. if
+  your key is not generated and stored by AWS). This could be added in a
+  future version.
 * The rename operation is not fully atomic (since it involves
   separate CopyObject and DeleteObject requests) - this means that if
   s3rename is terminated suddenly during operation, the bucket could be left with
   copied files where the originals have not been renamed (re-running
   s3rename with the same arguments would fix this). 
-* s3rename does not work with encrypted buckets (either by KMS or S3
-  encryption) - this support will be added in a future version.
-* Object ACLs (Access Control Lists) are currently overwritten, so all
-  objects renamed will be set to Private. This will be addressed in a
-  future version, but will likely require more requests and so be put
-  behind a --keep-acl flag.
-* The --no-overwrite flag is currently unimplemented, so there is no way
-  to rename keys, but not carry out the rename if a key already exists
-  with that name. This will be addressed in a future version.
-* There is no way of filtering keys to be renamed based on their date
-  modified, etc. - this will be addressed in a future version.
 
 ## S3 Billing
 

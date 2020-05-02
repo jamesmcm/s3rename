@@ -37,14 +37,14 @@ impl Drop for WrappedCopyRequest {
     fn drop(&mut self) {
         let delete_request = DeleteObjectRequest {
             bucket: self.bucket.clone(),
-            bypass_governance_retention: None,
+            bypass_governance_retention: None, // TODO: For Object Lock
             key: self.src_key.clone(),
-            mfa: None, // TODO: Required to delete if MFA and versioning enabled
+            mfa: None, // TODO: Required to permanently delete if MFA and versioning enabled
             request_payer: None,
             version_id: None,
         };
 
-        // TODO: Can we avoid this clone - only used for debugging
+        // TODO: Can we avoid this clone - only used for debugging in match below
         let key = delete_request.key.clone();
         if self.verbose {
             println!("Dropping key");

@@ -7,7 +7,8 @@ use structopt::StructOpt;
 fn parse_s3_prefix_url(src: &str) -> Result<S3Prefix, ArgumentError> {
     lazy_static! {
         static ref S3_REGEX: Regex =
-            Regex::new(r"s3://([A-Za-z0-9_-]+)/?([A-Za-z0-9_-]+)?").unwrap();
+            Regex::new(r"s3://([A-Za-z0-9_\-.]+)/?([@&:,$=+?;#A-Za-z0-9_\-/!.*'()%\s{}\[\]]+)?")
+                .unwrap();
     }
 
     let captures = S3_REGEX.captures(src).ok_or(ArgumentError::InvalidS3Url {
@@ -29,7 +30,6 @@ fn parse_s3_prefix_url(src: &str) -> Result<S3Prefix, ArgumentError> {
 
 #[derive(Debug)]
 pub struct S3Prefix {
-    // TODO: Wrap String to only take S3 acceptable chars (unicode?)
     pub bucket: String,
     pub key_prefix: Option<String>,
 }
@@ -56,6 +56,11 @@ pub struct App {
     /// Do not carry out modifications (only print)
     #[structopt(short = "n", long)]
     pub dry_run: bool,
+
+    /// Do not preserve object properties (saves retrieving per-object details) - using this flag
+    /// will remove any encryption
+    #[structopt(long)]
+    pub no_preserve_properties: bool,
 
     /// Perl RegEx Replace Expression (only s/target/replacement/flags form supported)
     #[structopt(parse(try_from_str = replace_command_from_str))]
