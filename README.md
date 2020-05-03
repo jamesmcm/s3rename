@@ -127,17 +127,49 @@ in a future version to allow numbered anonymous capture groups like sed.
 
 ## Installation
 
-### Cargo
+s3rename depends on OpenSSL at runtime.
+
+Building from source requires a Rust toolchain and Cargo.
+
+If you use this tool please consider starring [the Github repo](https://github.com/jamesmcm/s3rename) and voting
+for the package on [the AUR](https://aur.archlinux.org/packages/s3rename/).
+
+### Arch Linux (via [the Arch User Repository (AUR)](https://aur.archlinux.org/packages/s3rename/))
+
+Using the yay AUR helper:
+
+```bash
+$ yay -S s3rename
+```
+
+Alternatively you can [manually install the package from the AUR](https://wiki.archlinux.org/index.php/Arch_User_Repository#Installing_packages).
+
+### Cargo (via [crates.io](https://crates.io/crates/s3rename))
+
+```bash
+$ cargo install s3rename
+```
+
+The `s3rename` binary will then be in your Cargo binaries directory (and
+this should already be on your `$PATH`.
+
+### Cargo (from this repository)
 
 s3rename can be installed via Cargo from this cloned repository:
 
-```
+```bash
+$ git clone git@github.com:jamesmcm/s3rename.git
 $ cd s3rename
 $ cargo install --path .
 ```
 
 The `s3rename` binary will then be in your Cargo binaries directory (and
 this should already be on your `$PATH`.
+
+### Linux x86_64 binary
+
+Static binaries compiled for Linux x86_64 are available in the [Github
+releases](https://github.com/jamesmcm/s3rename/releases).
 
 ## Known Issues
 
