@@ -1,17 +1,3 @@
-// TODO: http://0.0.0.0:4000/rusoto_s3/struct.GetObjectAclOutput.html
-// http://0.0.0.0:4000/rusoto_s3/struct.Grant.html
-// grant_full_control: Option<String>
-// Gives the grantee READ, READ_ACP, and WRITE_ACP permissions on the object.
-
-// grant_read: Option<String>
-// Allows grantee to read the object data and its metadata.
-
-// grant_read_acp: Option<String>
-// Allows grantee to read the object ACL.
-
-// grant_write_acp: Option<String>
-// Allows grantee to write the ACL for the applicable object.
-
 #[macro_use]
 extern crate lazy_static;
 mod args;
