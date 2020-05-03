@@ -107,7 +107,7 @@ pub struct App {
     pub dry_run: bool,
 
     /// Do not preserve object properties (saves retrieving per-object details) - using this flag
-    /// will remove any encryption
+    /// will remove any encryption (does not affect ACL)
     #[structopt(long)]
     pub no_preserve_properties: bool,
 
@@ -126,4 +126,8 @@ pub struct App {
     /// Canned access_control_list override - sets this ACL for all renamed keys
     #[structopt(long, possible_values = CannedACL::possible_strings(), parse(try_from_str = CannedACL::from_str))]
     pub canned_acl: Option<CannedACL>,
+
+    /// Do not preserve Object ACL settings (set all to private)
+    #[structopt(long)]
+    pub no_preserve_acl: bool,
 }

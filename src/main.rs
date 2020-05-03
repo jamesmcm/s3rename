@@ -1,3 +1,17 @@
+// TODO: http://0.0.0.0:4000/rusoto_s3/struct.GetObjectAclOutput.html
+// http://0.0.0.0:4000/rusoto_s3/struct.Grant.html
+// grant_full_control: Option<String>
+// Gives the grantee READ, READ_ACP, and WRITE_ACP permissions on the object.
+
+// grant_read: Option<String>
+// Allows grantee to read the object data and its metadata.
+
+// grant_read_acp: Option<String>
+// Allows grantee to read the object ACL.
+
+// grant_write_acp: Option<String>
+// Allows grantee to write the ACL for the applicable object.
+
 #[macro_use]
 extern crate lazy_static;
 mod args;
@@ -10,13 +24,13 @@ use std::sync::Mutex;
 use anyhow::Result;
 use args::CannedACL;
 use core::str::FromStr;
-use errors::ArgumentError;
+use errors::{ArgumentError, GranteeParseError};
 use errors::{ExpressionError, S3Error};
 use futures::stream::StreamExt;
 use rusoto_core::Region;
-use rusoto_s3::{CopyObjectRequest, HeadObjectRequest};
+use rusoto_s3::{CopyObjectRequest, GetObjectAclRequest, HeadObjectRequest};
 use rusoto_s3::{GetBucketLocationRequest, ListObjectsV2Request};
-use rusoto_s3::{S3Client, S3};
+use rusoto_s3::{Grantee, S3Client, S3};
 use sedregex::ReplaceCommand;
 use structopt::StructOpt;
 use wrapped_copy::WrappedCopyRequest;
@@ -139,6 +153,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 opt.quiet,
                 opt.verbose,
                 opt.no_preserve_properties,
+                opt.no_preserve_acl,
                 opt.canned_acl,
                 destructor_futures.clone(),
             )
@@ -163,6 +178,7 @@ async fn handle_key(
     quiet: bool, // TODO: Refactor these args in to a Copy struct
     verbose: bool,
     no_preserve_properties: bool,
+    no_preserve_acl: bool,
     canned_acl: Option<CannedACL>,
     destructor_futures: Arc<Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), anyhow::Error> {
@@ -180,6 +196,66 @@ async fn handle_key(
         return Ok(());
     }
 
+    let mut grant_read_vec: Vec<String> = Vec::new();
+    let mut grant_read_acp_vec: Vec<String> = Vec::new();
+    let mut grant_write_acp_vec: Vec<String> = Vec::new();
+    let mut grant_full_control_vec: Vec<String> = Vec::new();
+
+    if !no_preserve_acl && canned_acl.is_none() {
+        let acl_request = GetObjectAclRequest {
+            bucket: String::from(bucket),
+            key: key.0.clone(),
+            request_payer: None,
+            version_id: None,
+        };
+        let acl_response = client.get_object_acl(acl_request).await?;
+        if verbose {
+            dbg!(&acl_response);
+        }
+
+        for grant in acl_response.grants.unwrap() {
+            let _ok_check = match grant.permission.as_deref() {
+                Some("READ") => {
+                    let grantee = grant.grantee.unwrap();
+                    grant_read_vec.push(generate_permission_grant(grantee)?);
+                    Ok(())
+                }
+                Some("WRITE") => {
+                    //TODO: No WRITE grant on CopyObjectRequest - is this controlled by bucket ACL?
+                    if verbose {
+                        println!(
+                            "Warning: WRITE access ignored for grantee: {:?} on key: {}",
+                            grant.grantee.unwrap(),
+                            &key.0
+                        );
+                    }
+                    Ok(())
+                }
+                Some("READ_ACP") => {
+                    let grantee = grant.grantee.unwrap();
+                    grant_read_acp_vec.push(generate_permission_grant(grantee)?);
+                    Ok(())
+                }
+                Some("WRITE_ACP") => {
+                    let grantee = grant.grantee.unwrap();
+                    grant_write_acp_vec.push(generate_permission_grant(grantee)?);
+                    Ok(())
+                }
+                Some("FULL_CONTROL") => {
+                    let grantee = grant.grantee.unwrap();
+                    grant_full_control_vec.push(generate_permission_grant(grantee)?);
+                    Ok(())
+                }
+                Some(other) => Err(GranteeParseError::InvalidPermission {
+                    permission: String::from(other),
+                    grantee: grant.grantee.unwrap(),
+                }),
+                None => Err(GranteeParseError::MissingPermission {
+                    grantee: grant.grantee.unwrap(),
+                }),
+            }?;
+        }
+    }
     let copy_request = match no_preserve_properties {
         false => {
             let head_request = HeadObjectRequest {
@@ -215,10 +291,26 @@ async fn handle_key(
                 copy_source_sse_customer_key: None, //TODO
                 copy_source_sse_customer_key_md5: head_result.sse_customer_key_md5.clone(),
                 expires: head_result.expires,
-                grant_full_control: None, //TODO
-                grant_read: None,
-                grant_read_acp: None,
-                grant_write_acp: None,
+                grant_full_control: if grant_full_control_vec.len() > 0 {
+                    Some(grant_full_control_vec.join(", "))
+                } else {
+                    None
+                },
+                grant_read: if grant_read_vec.len() > 0 {
+                    Some(grant_read_vec.join(", "))
+                } else {
+                    None
+                },
+                grant_read_acp: if grant_read_acp_vec.len() > 0 {
+                    Some(grant_read_acp_vec.join(", "))
+                } else {
+                    None
+                },
+                grant_write_acp: if grant_write_acp_vec.len() > 0 {
+                    Some(grant_write_acp_vec.join(", "))
+                } else {
+                    None
+                },
                 key: String::from(newkey.to_owned()),
                 metadata: head_result.metadata,
                 metadata_directive: Some(String::from("REPLACE")), // Set to REPLACE due to
@@ -256,10 +348,26 @@ async fn handle_key(
             copy_source_sse_customer_key: None,
             copy_source_sse_customer_key_md5: None,
             expires: None,
-            grant_full_control: None,
-            grant_read: None,
-            grant_read_acp: None,
-            grant_write_acp: None,
+            grant_full_control: if grant_full_control_vec.len() > 0 {
+                Some(grant_full_control_vec.join(", "))
+            } else {
+                None
+            },
+            grant_read: if grant_read_vec.len() > 0 {
+                Some(grant_read_vec.join(", "))
+            } else {
+                None
+            },
+            grant_read_acp: if grant_read_acp_vec.len() > 0 {
+                Some(grant_read_acp_vec.join(", "))
+            } else {
+                None
+            },
+            grant_write_acp: if grant_write_acp_vec.len() > 0 {
+                Some(grant_write_acp_vec.join(", "))
+            } else {
+                None
+            },
             key: String::from(newkey.to_owned()),
             metadata: None,
             metadata_directive: Some(String::from("COPY")),
@@ -290,4 +398,18 @@ async fn handle_key(
     .await?;
 
     Ok(())
+}
+
+/// Convert a Grantee object to a grant String to use in the CopyObjectRequest
+fn generate_permission_grant(grantee: Grantee) -> Result<String, GranteeParseError> {
+    if let Some(uri) = grantee.uri {
+        return Ok(format!("uri=\"{}\"", uri));
+    }
+    if let Some(id) = grantee.id {
+        return Ok(format!("id=\"{}\"", id));
+    }
+    if let Some(email) = grantee.email_address {
+        return Ok(format!("emailAddress=\"{}\"", email));
+    }
+    Err(GranteeParseError::NoValidID { grantee })
 }

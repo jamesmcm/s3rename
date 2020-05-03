@@ -1,3 +1,4 @@
+use rusoto_s3::Grantee;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -26,4 +27,17 @@ pub enum ArgumentError {
         s: String,
         possible_strings: &'static [&'static str],
     },
+}
+
+#[derive(Error, Debug)]
+pub enum GranteeParseError {
+    #[error("Could not get valid ID for grantee: {grantee:?}")]
+    NoValidID { grantee: Grantee },
+    #[error("Invalid permission type: {permission} for grantee: {grantee:?}")]
+    InvalidPermission {
+        permission: String,
+        grantee: Grantee,
+    },
+    #[error("Missing permission for grantee: {grantee:?}")]
+    MissingPermission { grantee: Grantee },
 }

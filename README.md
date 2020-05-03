@@ -8,9 +8,17 @@ GNU/Linux (also known as `prename` and `perl-rename`).
 s3rename uses asynchronous requests to rename the keys in parallel, as
 fast as possible.
 
+The expression provided is applied to the entire key, allowing you to
+rename parent "directories".
+
 Object properties are preserved, unless the `--no-preserve-properties` 
-flag is
-used.
+flag is used.
+
+Object ACL (Access Control List) settings will also be preserved, unless
+the `--no-preserve-acl` flag is used.
+
+It is highly recommended to use the `--dry-run` flag at first to ensure the
+changes reflect what you intend.
 
 ## Usage
 
@@ -25,6 +33,7 @@ USAGE:
 FLAGS:
     -n, --dry-run                   Do not carry out modifications (only print)
     -h, --help                      Prints help information
+        --no-preserve-acl           Do not preserve Object ACL settings (all will be set to private)
         --no-preserve-properties    Do not preserve object properties (saves retrieving per-object details) - using this
                                     flag will remove any encryption
     -q, --quiet                     Do not print key modifications
@@ -60,6 +69,11 @@ $ aws s3 ls s3://s3rename-test-bucket --recursive
 
 The `--dry-run` flag will print changes to be made without carrying them
 out. This is __highly__ recommended before running changes.
+
+By default ACL settings for objects will be preserved (unless
+`--no-preserve-acl` is passed), however this does
+not apply to ACL settings which depend on the bucket ACL (i.e. public
+write access).
 
 The `--canned-acl <canned-acl>` option can be used to set the ACL of all
 renamed objects to the provided [canned ACL](https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html#canned-acl).
@@ -127,11 +141,6 @@ this should already be on your `$PATH`.
 
 ## Known Issues
 
-* [Object ACLs](https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html) 
-  (Access Control Lists) are currently overwritten, so all objects 
-  renamed will be set to Private by default (or the ACL specified with
-  --canned-acl). This will be addressed in a
-  future version.
 * Buckets and objects using [S3 Object
   Lock](https://docs.aws.amazon.com/AmazonS3/latest/dev/object-lock-overview.html)
   are currently unsupported.
@@ -139,8 +148,8 @@ this should already be on your `$PATH`.
   updated (so any keys moved out of the scope of these rules will no
   longer have the expiry rules applied). In the future a specific
   command to update expiry rules may be added.
-* s3rename does not support custom keys for encrypted buckets (i.e. if
-  your key is not generated and stored by AWS). This could be added in a
+* s3rename does not support custom encryption keys for encrypted buckets (i.e. if
+  your encryption key is not generated and stored by AWS). This could be added in a
   future version.
 * The rename operation is not fully atomic (since it involves
   separate CopyObject and DeleteObject requests) - this means that if
