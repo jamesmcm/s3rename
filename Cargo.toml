@@ -6,8 +6,8 @@ authors = ["James McMurray <jamesmcm03@gmail.com>"]
 edition = "2018"
 license = "MIT/Apache-2.0"
 readme = "README.md"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/jamesmcm/s3rename"
+homepage = "https://github.com/jamesmcm/s3rename"
 
 [dependencies]
 sedregex = "0.2"
