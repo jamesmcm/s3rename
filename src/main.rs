@@ -113,7 +113,21 @@ async fn main() -> Result<(), anyhow::Error> {
     if opt.verbose {
         dbg!("{:?}", &keys_vec);
     }
-    let replace_command = match ReplaceCommand::new(&opt.expr) {
+
+    // Used to store futures returned from destructors (so we do not terminate until destructors
+    // have finished) - this pseudo-async destructor setup might violate atomicity (since a
+    // terminate request will guarantee destructors run but not that the spawned async DeleteObject
+    // requests finish). The whole issue here is that we cannot .await() inside the .drop()
+    // method as it is not async.
+    let destructor_futures = Arc::new(Mutex::new(futures::stream::FuturesUnordered::new()));
+    let mut futures = futures::stream::FuturesUnordered::new();
+
+    // We use unsafe here since we need the &str inside ReplaceCommand to have a static lifetime
+    // To do that we use a static mut String that we clone the user-entered string in to
+    // Mutating statics requires unsafe {} - but note we only mutate it once, and on this main
+    // thread, so this should be sound
+    let static_str: &'static str = Box::leak(opt.expr.clone().into_boxed_str());
+    let replace_command = match ReplaceCommand::new(static_str) {
         Ok(x) => Ok(x),
         Err(err) => Err(ExpressionError::SedRegexParseError {
             expression: opt.expr.clone(),
@@ -121,31 +135,37 @@ async fn main() -> Result<(), anyhow::Error> {
         }),
     }?;
 
-    // Used to store futures returned from destructors (so we do not terminate until destructors
-    // have finished) - this pseudo-async destructor setup might violate atomicity (since a
-    // terminate request will guarantee destructors run but not that the spawned async DeleteObject
-    // requests finish) - TODO: Verify this and consider synchronous destructors
-    let destructor_futures = Arc::new(Mutex::new(futures::stream::FuturesUnordered::new()));
+    let replace_command = Arc::new(replace_command);
 
-    let mut futures: futures::stream::FuturesUnordered<_> = keys_vec
-        .iter()
-        .map(|x| {
-            handle_key(
-                client.clone(),
-                &opt.s3_url.bucket,
-                x,
-                &replace_command,
-                opt.dry_run,
-                opt.quiet,
-                opt.verbose,
-                opt.no_preserve_properties,
-                opt.no_preserve_acl,
-                opt.canned_acl,
-                destructor_futures.clone(),
-            )
-        })
-        .collect();
+    let bucket = Arc::new(opt.s3_url.bucket);
+    let canned_acl = Arc::new(opt.canned_acl);
+    for key in keys_vec {
+        // TODO: Refactor this
+        let newclient = client.clone();
+        let newbucket = bucket.clone();
+        let newreplace_command = replace_command.clone();
+        let new_destructor_futures = destructor_futures.clone();
 
+        let dry_run = opt.dry_run;
+        let quiet = opt.quiet;
+        let verbose = opt.verbose;
+        let no_preserve_properties = opt.no_preserve_properties;
+        let no_preserve_acl = opt.no_preserve_acl;
+        let new_canned_acl = canned_acl.clone();
+        futures.push(tokio::spawn(handle_key(
+            newclient,
+            newbucket,
+            key,
+            newreplace_command,
+            dry_run,
+            quiet,
+            verbose,
+            no_preserve_properties,
+            no_preserve_acl,
+            new_canned_acl,
+            new_destructor_futures.clone(),
+        )));
+    }
     while let Some(_handled) = futures.next().await {}
 
     // Does Mutex make sense?
@@ -154,18 +174,17 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-// TODO: Does this actually work on multiple threads?
 async fn handle_key(
     client: Arc<S3Client>,
-    bucket: &str,
-    key: &(String, Option<String>),
-    replace_command: &ReplaceCommand<'_>,
+    bucket: Arc<String>,
+    key: (String, Option<String>),
+    replace_command: Arc<ReplaceCommand<'_>>,
     dry_run: bool,
     quiet: bool, // TODO: Refactor these args in to a Copy struct
     verbose: bool,
     no_preserve_properties: bool,
     no_preserve_acl: bool,
-    canned_acl: Option<CannedACL>,
+    canned_acl: Arc<Option<CannedACL>>,
     destructor_futures: Arc<Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), anyhow::Error> {
     let newkey = replace_command.execute(&key.0);
@@ -189,7 +208,7 @@ async fn handle_key(
 
     if !no_preserve_acl && canned_acl.is_none() {
         let acl_request = GetObjectAclRequest {
-            bucket: String::from(bucket),
+            bucket: (*bucket).clone(),
             key: key.0.clone(),
             request_payer: None,
             version_id: None,
@@ -245,7 +264,7 @@ async fn handle_key(
     let copy_request = match no_preserve_properties {
         false => {
             let head_request = HeadObjectRequest {
-                bucket: String::from(bucket),
+                bucket: (*bucket).clone(),
                 if_match: None,
                 if_modified_since: None,
                 if_none_match: None,
@@ -262,7 +281,7 @@ async fn handle_key(
             let head_result = client.head_object(head_request).await?;
             CopyObjectRequest {
                 acl: canned_acl.map(|x| x.to_string()),
-                bucket: String::from(bucket),
+                bucket: (*bucket).clone(),
                 cache_control: head_result.cache_control,
                 content_disposition: head_result.content_disposition,
                 content_encoding: head_result.content_encoding,
@@ -319,7 +338,7 @@ async fn handle_key(
         }
         true => CopyObjectRequest {
             acl: canned_acl.map(|x| x.to_string()),
-            bucket: String::from(bucket),
+            bucket: (*bucket).clone(),
             cache_control: None,
             content_disposition: None,
             content_encoding: None,
