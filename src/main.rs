@@ -21,8 +21,6 @@ use sedregex::ReplaceCommand;
 use structopt::StructOpt;
 use wrapped_copy::WrappedCopyRequest;
 
-static mut REGEX_STRING: String = String::new();
-
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let opt = args::App::from_args();
@@ -128,47 +126,45 @@ async fn main() -> Result<(), anyhow::Error> {
     // To do that we use a static mut String that we clone the user-entered string in to
     // Mutating statics requires unsafe {} - but note we only mutate it once, and on this main
     // thread, so this should be sound
-    unsafe {
-        REGEX_STRING = opt.expr.clone();
-        let replace_command = match ReplaceCommand::new(&REGEX_STRING) {
-            Ok(x) => Ok(x),
-            Err(err) => Err(ExpressionError::SedRegexParseError {
-                expression: opt.expr.clone(),
-                error: err,
-            }),
-        }?;
+    let static_str: &'static str = Box::leak(opt.expr.clone().into_boxed_str());
+    let replace_command = match ReplaceCommand::new(static_str) {
+        Ok(x) => Ok(x),
+        Err(err) => Err(ExpressionError::SedRegexParseError {
+            expression: opt.expr.clone(),
+            error: err,
+        }),
+    }?;
 
-        let replace_command = Arc::new(replace_command);
+    let replace_command = Arc::new(replace_command);
 
-        let bucket = Arc::new(opt.s3_url.bucket);
-        let canned_acl = Arc::new(opt.canned_acl);
-        for key in keys_vec {
-            // TODO: Refactor this
-            let newclient = client.clone();
-            let newbucket = bucket.clone();
-            let newreplace_command = replace_command.clone();
-            let new_destructor_futures = destructor_futures.clone();
+    let bucket = Arc::new(opt.s3_url.bucket);
+    let canned_acl = Arc::new(opt.canned_acl);
+    for key in keys_vec {
+        // TODO: Refactor this
+        let newclient = client.clone();
+        let newbucket = bucket.clone();
+        let newreplace_command = replace_command.clone();
+        let new_destructor_futures = destructor_futures.clone();
 
-            let dry_run = opt.dry_run;
-            let quiet = opt.quiet;
-            let verbose = opt.verbose;
-            let no_preserve_properties = opt.no_preserve_properties;
-            let no_preserve_acl = opt.no_preserve_acl;
-            let new_canned_acl = canned_acl.clone();
-            futures.push(tokio::spawn(handle_key(
-                newclient,
-                newbucket,
-                key,
-                newreplace_command,
-                dry_run,
-                quiet,
-                verbose,
-                no_preserve_properties,
-                no_preserve_acl,
-                new_canned_acl,
-                new_destructor_futures.clone(),
-            )));
-        }
+        let dry_run = opt.dry_run;
+        let quiet = opt.quiet;
+        let verbose = opt.verbose;
+        let no_preserve_properties = opt.no_preserve_properties;
+        let no_preserve_acl = opt.no_preserve_acl;
+        let new_canned_acl = canned_acl.clone();
+        futures.push(tokio::spawn(handle_key(
+            newclient,
+            newbucket,
+            key,
+            newreplace_command,
+            dry_run,
+            quiet,
+            verbose,
+            no_preserve_properties,
+            no_preserve_acl,
+            new_canned_acl,
+            new_destructor_futures.clone(),
+        )));
     }
     while let Some(_handled) = futures.next().await {}
 
@@ -178,7 +174,6 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-// TODO: Does this actually work on multiple threads?
 async fn handle_key(
     client: Arc<S3Client>,
     bucket: Arc<String>,
