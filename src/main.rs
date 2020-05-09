@@ -122,11 +122,25 @@ async fn main() -> Result<(), anyhow::Error> {
     let destructor_futures = Arc::new(Mutex::new(futures::stream::FuturesUnordered::new()));
     let mut futures = futures::stream::FuturesUnordered::new();
 
-    // We use unsafe here since we need the &str inside ReplaceCommand to have a static lifetime
-    // To do that we use a static mut String that we clone the user-entered string in to
-    // Mutating statics requires unsafe {} - but note we only mutate it once, and on this main
-    // thread, so this should be sound
-    let static_str: &'static str = Box::leak(opt.expr.clone().into_boxed_str());
+    let parsed_string = if !opt.no_anonymous_groups {
+        // Pre-parse regex to allow \N syntax for capture groups (as well as $N)
+        // This is a heuristic, we do not check if preceding backslash was already escaped
+        // Can be disabled with --no-anonymous-groups flag
+        let capture_regex = regex::Regex::new("\\\\(?P<index>[0-9])")?;
+        let original_string = opt.expr.clone();
+        let parsed_string = capture_regex.replace_all(&original_string, "$$$index");
+
+        if opt.verbose {
+            dbg!(&parsed_string);
+        }
+        parsed_string.into_owned()
+    } else {
+        opt.expr.clone()
+    };
+
+    // We leak Box to get &'static str which is thread-safe and can be put inside ReplaceCommand
+    let static_str: &'static str = Box::leak(parsed_string.into_boxed_str());
+
     let replace_command = match ReplaceCommand::new(static_str) {
         Ok(x) => Ok(x),
         Err(err) => Err(ExpressionError::SedRegexParseError {
