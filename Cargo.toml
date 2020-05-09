@@ -1,7 +1,7 @@
 [package]
 name = "s3rename"
 description = "Tool to mass-rename S3 keys"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["James McMurray <jamesmcm03@gmail.com>"]
 edition = "2018"
 license = "MIT/Apache-2.0"
