@@ -130,4 +130,9 @@ pub struct App {
     /// Do not preserve Object ACL settings (set all to private)
     #[structopt(long)]
     pub no_preserve_acl: bool,
+
+    /// Do not allow anonymous capture groups i.e. \1, \2 - may be useful when dealing with
+    /// keys containing backslashes
+    #[structopt(long)]
+    pub no_anonymous_groups: bool,
 }
