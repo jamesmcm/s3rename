@@ -33,6 +33,8 @@ USAGE:
 FLAGS:
     -n, --dry-run                   Do not carry out modifications (only print)
     -h, --help                      Prints help information
+        --no-anonymous-groups       Do not allow anonymous capture groups i.e. \1, \2 - may be useful when dealing with
+                                    keys containing backslashes
         --no-preserve-acl           Do not preserve Object ACL settings (all will be set to private)
         --no-preserve-properties    Do not preserve object properties (saves retrieving per-object details) - using this
                                     flag will remove any encryption
@@ -99,7 +101,7 @@ $ aws s3 ls s3://s3rename-test-bucket/datatest --recursive
 2020-05-01 12:38:43          0 datatest/data_2020-05-02.txt
 2020-05-01 12:38:43          0 datatest/data_2020-06-01.txt
 
-$ ./s3rename "s/data_(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2}).txt/year=\$year\/month=\$month\/day=\$day\/data_\$year-\$month-\$day.txt/g" s3://s3rename-test-bucket/datatest
+$ ./s3rename 's/data_(?P<year>[0-9]{4})-(?P<month>[0-9]{2})-(?P<day>[0-9]{2}).txt/year=$year\/month=$month\/day=$day\/data_$year-$month-$day.txt/g' s3://s3rename-test-bucket/datatest
 Renaming datatest/ to datatest/
 Renaming datatest/data_2020-04-01.txt to datatest/year=2020/month=04/day=01/data_2020-04-01.txt
 Renaming datatest/data_2020-04-02.txt to datatest/year=2020/month=04/day=02/data_2020-04-02.txt
@@ -122,8 +124,25 @@ $ aws s3 ls s3://s3rename-test-bucket/datatest --recursive
 2020-05-01 12:39:38          0 datatest/year=2020/month=06/day=01/data_2020-06-01.txt
 ```
 
-Note the requirement to use named capture groups, this will be addressed
-in a future version to allow numbered anonymous capture groups like sed.
+Note the use of single quotes for the sed regex string to avoid issues
+with the $ symbols in the shell.
+
+You can also use anonymous capture groups, with the replacement parts
+marked either by $ or \, i.e.:
+
+```
+'s/data_([0-9]{4})-([0-9]{2})-([0-9]{2}).txt/year=\1\/month=\2\/day=\3\/data_\1-\2-\3.txt/g'
+```
+
+is equivalent to the above, and equivalent to:
+
+
+```
+'s/data_([0-9]{4})-([0-9]{2})-([0-9]{2}).txt/year=$1\/month=$2\/day=$3\/data_$1-$2-$3.txt/g'
+```
+
+Use multiple dollar symbols to escape the dollars (for literal dollar
+symbols).
 
 ## Installation
 
