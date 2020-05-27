@@ -27,7 +27,7 @@ async fn main() -> Result<(), anyhow::Error> {
     if opt.verbose {
         dbg!("{:?}", &opt);
     }
-    let client = S3Client::new(opt.aws_region.clone().unwrap_or(Region::UsEast1)); //TODO: Try to get region from AWS config too - does Rusoto provide this?
+    let client = S3Client::new(opt.aws_region.clone().unwrap_or(Region::default()));
 
     let bucket_region: Option<Region> = match client
         .get_bucket_location(GetBucketLocationRequest {
