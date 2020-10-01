@@ -1,3 +1,4 @@
+use log::{debug, error};
 use rusoto_s3::{CopyObjectRequest, DeleteObjectRequest};
 use rusoto_s3::{S3Client, S3};
 use std::sync::{Arc, Mutex};
@@ -47,7 +48,7 @@ impl Drop for WrappedCopyRequest {
         // TODO: Can we avoid this clone - only used for debugging in match below
         let key = delete_request.key.clone();
         if self.verbose {
-            println!("Dropping key");
+            debug!("Dropping key");
             dbg!(&key);
         }
 
@@ -61,11 +62,11 @@ impl Drop for WrappedCopyRequest {
             match move_client.delete_object(delete_request).await {
                 Ok(_) => {
                     if move_verbose {
-                        println!("Deleted {}", key);
+                        debug!("Deleted {}", key);
                     }
                 }
                 Err(x) => {
-                    eprintln!("{:?}", x);
+                    error!("{:?}", x);
                 }
             }
         });

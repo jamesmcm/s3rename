@@ -13,6 +13,7 @@ use core::str::FromStr;
 use errors::{ArgumentError, GranteeParseError};
 use errors::{ExpressionError, S3Error};
 use futures::stream::StreamExt;
+use log::{debug, info};
 use rusoto_core::Region;
 use rusoto_s3::{CopyObjectRequest, GetObjectAclRequest, HeadObjectRequest};
 use rusoto_s3::{GetBucketLocationRequest, ListObjectsV2Request};
@@ -25,7 +26,7 @@ use wrapped_copy::WrappedCopyRequest;
 async fn main() -> Result<(), anyhow::Error> {
     let opt = args::App::from_args();
     if opt.verbose {
-        dbg!("{:?}", &opt);
+        debug!("{:?}", &opt);
     }
     let client = S3Client::new(opt.aws_region.clone().unwrap_or(Region::default()));
 
@@ -111,7 +112,7 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     if opt.verbose {
-        dbg!("{:?}", &keys_vec);
+        debug!("{:?}", &keys_vec);
     }
 
     // Used to store futures returned from destructors (so we do not terminate until destructors
@@ -204,12 +205,12 @@ async fn handle_key(
     let newkey = replace_command.execute(&key.0);
     if newkey == key.0 {
         if verbose {
-            println!("Skipping {:?} since key did not change", key);
+            debug!("Skipping {:?} since key did not change", key);
         }
         return Ok(());
     }
     if !quiet {
-        println!("Renaming {} to {}", key.0, newkey);
+        info!("Renaming {} to {}", key.0, newkey);
     }
     if dry_run {
         return Ok(());
@@ -242,7 +243,7 @@ async fn handle_key(
                 Some("WRITE") => {
                     //TODO: No WRITE grant on CopyObjectRequest - is this controlled by bucket ACL?
                     if verbose {
-                        println!(
+                        debug!(
                             "Warning: WRITE access ignored for grantee: {:?} on key: {}",
                             grant.grantee.unwrap(),
                             &key.0
