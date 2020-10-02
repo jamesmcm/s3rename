@@ -12,8 +12,8 @@ homepage = "https://github.com/jamesmcm/s3rename"
 [dependencies]
 sedregex = "0.2"
 tokio = {version = "0.2", features = ["full"]}
-rusoto_core = "0.43"
-rusoto_s3 = "0.43"
+rusoto_core = {version = "0.43", default_features=false, features=["rustls"]}
+rusoto_s3 = {version = "0.43", default_features=false, features=["rustls"]}
 structopt = "0.3"
 anyhow = "1"
 thiserror = "1"
