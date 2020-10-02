@@ -13,6 +13,7 @@ use core::str::FromStr;
 use errors::{ArgumentError, GranteeParseError};
 use errors::{ExpressionError, S3Error};
 use futures::stream::StreamExt;
+use log::{debug, info};
 use rusoto_core::Region;
 use rusoto_s3::{CopyObjectRequest, GetObjectAclRequest, HeadObjectRequest};
 use rusoto_s3::{GetBucketLocationRequest, ListObjectsV2Request};
@@ -24,9 +25,12 @@ use wrapped_copy::WrappedCopyRequest;
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let opt = args::App::from_args();
-    if opt.verbose {
-        dbg!("{:?}", &opt);
+    if let Err(e) = setup_logger(opt.verbose, opt.quiet) {
+        eprintln!("Could not set up logger: {}", e);
+        std::process::exit(1);
     }
+
+    debug!("{:?}", &opt);
     let client = S3Client::new(opt.aws_region.clone().unwrap_or(Region::default()));
 
     let bucket_region: Option<Region> = match client
@@ -50,9 +54,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }),
     }?;
 
-    if opt.verbose {
-        dbg!(&target_region);
-    }
+    debug!("{:?}", target_region);
     let client = Arc::new(S3Client::new(target_region));
 
     // Collect all keys under prefix to this Vec (can we avoid this allocation)?
@@ -110,9 +112,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    if opt.verbose {
-        dbg!("{:?}", &keys_vec);
-    }
+    debug!("{:?}", &keys_vec);
 
     // Used to store futures returned from destructors (so we do not terminate until destructors
     // have finished) - this pseudo-async destructor setup might violate atomicity (since a
@@ -130,9 +130,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let original_string = opt.expr.clone();
         let parsed_string = capture_regex.replace_all(&original_string, "$$$index");
 
-        if opt.verbose {
-            dbg!(&parsed_string);
-        }
+        debug!("{}", parsed_string);
         parsed_string.into_owned()
     } else {
         opt.expr.clone()
@@ -161,8 +159,6 @@ async fn main() -> Result<(), anyhow::Error> {
         let new_destructor_futures = destructor_futures.clone();
 
         let dry_run = opt.dry_run;
-        let quiet = opt.quiet;
-        let verbose = opt.verbose;
         let no_preserve_properties = opt.no_preserve_properties;
         let no_preserve_acl = opt.no_preserve_acl;
         let new_canned_acl = canned_acl.clone();
@@ -172,8 +168,6 @@ async fn main() -> Result<(), anyhow::Error> {
             key,
             newreplace_command,
             dry_run,
-            quiet,
-            verbose,
             no_preserve_properties,
             no_preserve_acl,
             new_canned_acl,
@@ -194,8 +188,6 @@ async fn handle_key(
     key: (String, Option<String>),
     replace_command: Arc<ReplaceCommand<'_>>,
     dry_run: bool,
-    quiet: bool, // TODO: Refactor these args in to a Copy struct
-    verbose: bool,
     no_preserve_properties: bool,
     no_preserve_acl: bool,
     canned_acl: Arc<Option<CannedACL>>,
@@ -203,14 +195,10 @@ async fn handle_key(
 ) -> Result<(), anyhow::Error> {
     let newkey = replace_command.execute(&key.0);
     if newkey == key.0 {
-        if verbose {
-            println!("Skipping {:?} since key did not change", key);
-        }
+        debug!("Skipping {:?} since key did not change", key);
         return Ok(());
     }
-    if !quiet {
-        println!("Renaming {} to {}", key.0, newkey);
-    }
+    info!("Renaming {} to {}", key.0, newkey);
     if dry_run {
         return Ok(());
     }
@@ -228,9 +216,7 @@ async fn handle_key(
             version_id: None,
         };
         let acl_response = client.get_object_acl(acl_request).await?;
-        if verbose {
-            dbg!(&acl_response);
-        }
+        debug!("{:?}", acl_response);
 
         for grant in acl_response.grants.unwrap() {
             let _ok_check = match grant.permission.as_deref() {
@@ -241,13 +227,11 @@ async fn handle_key(
                 }
                 Some("WRITE") => {
                     //TODO: No WRITE grant on CopyObjectRequest - is this controlled by bucket ACL?
-                    if verbose {
-                        println!(
-                            "Warning: WRITE access ignored for grantee: {:?} on key: {}",
-                            grant.grantee.unwrap(),
-                            &key.0
-                        );
-                    }
+                    debug!(
+                        "Warning: WRITE access ignored for grantee: {:?} on key: {}",
+                        grant.grantee.unwrap(),
+                        &key.0
+                    );
                     Ok(())
                 }
                 Some("READ_ACP") => {
@@ -411,7 +395,6 @@ async fn handle_key(
         client.clone(),
         copy_request,
         key.0.clone(),
-        verbose,
         destructor_futures.clone(),
     )
     .await?;
@@ -431,4 +414,35 @@ fn generate_permission_grant(grantee: Grantee) -> Result<String, GranteeParseErr
         return Ok(format!("emailAddress=\"{}\"", email));
     }
     Err(GranteeParseError::NoValidID { grantee })
+}
+
+/// Setup the logger.
+///
+/// The logging level is set via:
+///
+/// - If `verbose == false` and `quiet == false` then `Info`
+/// - If `verbose == true`, then `Debug`
+/// - If `quite == true`, then `Warn`
+fn setup_logger(verbose: bool, quiet: bool) -> Result<(), fern::InitError> {
+    let log_level = if !verbose && !quiet {
+        log::LevelFilter::Info
+    } else if verbose {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Warn
+    };
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .level(log_level)
+        .chain(std::io::stdout())
+        .apply()?;
+    Ok(())
 }

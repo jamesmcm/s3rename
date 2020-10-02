@@ -1,3 +1,4 @@
+use log::{debug, error};
 use rusoto_s3::{CopyObjectRequest, DeleteObjectRequest};
 use rusoto_s3::{S3Client, S3};
 use std::sync::{Arc, Mutex};
@@ -5,7 +6,6 @@ pub struct WrappedCopyRequest {
     bucket: String,
     src_key: String,
     client: Arc<S3Client>,
-    verbose: bool,
     destructor_futures: Arc<Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -14,7 +14,6 @@ impl WrappedCopyRequest {
         client: Arc<S3Client>,
         request: CopyObjectRequest,
         src_key: String,
-        verbose: bool,
         destructor_futures: Arc<
             Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>,
         >,
@@ -25,7 +24,6 @@ impl WrappedCopyRequest {
                 bucket,
                 src_key,
                 client,
-                verbose,
                 destructor_futures,
             }),
             Err(x) => Err(anyhow::Error::from(x)),
@@ -46,26 +44,20 @@ impl Drop for WrappedCopyRequest {
 
         // TODO: Can we avoid this clone - only used for debugging in match below
         let key = delete_request.key.clone();
-        if self.verbose {
-            println!("Dropping key");
-            dbg!(&key);
-        }
+        debug!("Dropping key: {}", key);
 
         // use spawn so we don't block
         // need reference to client
         // write handles to a FuturesUnordered - can we avoid Mutex here?
-        let move_verbose = self.verbose.clone(); // wtf - this is Copy
         let move_client: Arc<S3Client> = self.client.clone();
 
         let handle = tokio::spawn(async move {
             match move_client.delete_object(delete_request).await {
                 Ok(_) => {
-                    if move_verbose {
-                        println!("Deleted {}", key);
-                    }
+                    debug!("Deleted {}", key);
                 }
                 Err(x) => {
-                    eprintln!("{:?}", x);
+                    error!("{:?}", x);
                 }
             }
         });
