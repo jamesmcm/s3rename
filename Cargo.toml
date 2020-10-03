@@ -26,3 +26,12 @@ num-traits = "0.2"
 log = "0.4"
 fern = "0.6"
 chrono = "0.4"
+
+[package.metadata.rpm]
+package = "s3rename"
+
+[package.metadata.rpm.cargo]
+buildflags = ["--release"]
+
+[package.metadata.rpm.targets]
+s3rename = { path = "/usr/bin/s3rename" }
