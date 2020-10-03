@@ -31,7 +31,7 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     debug!("{:?}", &opt);
-    let client = S3Client::new(opt.aws_region.clone().unwrap_or(Region::default()));
+    let client = S3Client::new(opt.aws_region.clone().unwrap_or_default());
 
     let bucket_region: Option<Region> = match client
         .get_bucket_location(GetBucketLocationRequest {
@@ -99,7 +99,7 @@ async fn main() -> Result<(), anyhow::Error> {
             .into_iter()
             .filter(|x| x.key.is_some())
             .map(|x| (x.key.unwrap(), x.storage_class))
-            .filter(|x| x.0.chars().last().unwrap() != '/'); // Skip "directory" keys - TODO: check issues regarding empty directories
+            .filter(|x| !x.0.ends_with('/')); // Skip "directory" keys - TODO: check issues regarding empty directories
 
         keys_vec.extend(objects_inner);
 
@@ -149,7 +149,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let replace_command = Arc::new(replace_command);
 
-    let bucket = Arc::new(opt.s3_url.bucket);
+    let bucket: Arc<str> = Arc::from(opt.s3_url.bucket.as_str());
     let canned_acl = Arc::new(opt.canned_acl);
     for key in keys_vec {
         // TODO: Refactor this
@@ -182,9 +182,10 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_key(
     client: Arc<S3Client>,
-    bucket: Arc<String>,
+    bucket: Arc<str>,
     key: (String, Option<String>),
     replace_command: Arc<ReplaceCommand<'_>>,
     dry_run: bool,
@@ -210,7 +211,7 @@ async fn handle_key(
 
     if !no_preserve_acl && canned_acl.is_none() {
         let acl_request = GetObjectAclRequest {
-            bucket: (*bucket).clone(),
+            bucket: (*bucket).to_string(),
             key: key.0.clone(),
             request_payer: None,
             version_id: None,
@@ -262,7 +263,7 @@ async fn handle_key(
     let copy_request = match no_preserve_properties {
         false => {
             let head_request = HeadObjectRequest {
-                bucket: (*bucket).clone(),
+                bucket: (*bucket).to_string(),
                 if_match: None,
                 if_modified_since: None,
                 if_none_match: None,
@@ -279,7 +280,7 @@ async fn handle_key(
             let head_result = client.head_object(head_request).await?;
             CopyObjectRequest {
                 acl: canned_acl.map(|x| x.to_string()),
-                bucket: (*bucket).clone(),
+                bucket: (*bucket).to_string(),
                 cache_control: head_result.cache_control,
                 content_disposition: head_result.content_disposition,
                 content_encoding: head_result.content_encoding,
@@ -294,22 +295,22 @@ async fn handle_key(
                 copy_source_sse_customer_key: None, //TODO
                 copy_source_sse_customer_key_md5: head_result.sse_customer_key_md5.clone(),
                 expires: head_result.expires,
-                grant_full_control: if grant_full_control_vec.len() > 0 {
+                grant_full_control: if !grant_full_control_vec.is_empty() {
                     Some(grant_full_control_vec.join(", "))
                 } else {
                     None
                 },
-                grant_read: if grant_read_vec.len() > 0 {
+                grant_read: if !grant_read_vec.is_empty() {
                     Some(grant_read_vec.join(", "))
                 } else {
                     None
                 },
-                grant_read_acp: if grant_read_acp_vec.len() > 0 {
+                grant_read_acp: if !grant_read_acp_vec.is_empty() {
                     Some(grant_read_acp_vec.join(", "))
                 } else {
                     None
                 },
-                grant_write_acp: if grant_write_acp_vec.len() > 0 {
+                grant_write_acp: if !grant_write_acp_vec.is_empty() {
                     Some(grant_write_acp_vec.join(", "))
                 } else {
                     None
@@ -336,7 +337,7 @@ async fn handle_key(
         }
         true => CopyObjectRequest {
             acl: canned_acl.map(|x| x.to_string()),
-            bucket: (*bucket).clone(),
+            bucket: (*bucket).to_string(),
             cache_control: None,
             content_disposition: None,
             content_encoding: None,
@@ -351,22 +352,22 @@ async fn handle_key(
             copy_source_sse_customer_key: None,
             copy_source_sse_customer_key_md5: None,
             expires: None,
-            grant_full_control: if grant_full_control_vec.len() > 0 {
+            grant_full_control: if !grant_full_control_vec.is_empty() {
                 Some(grant_full_control_vec.join(", "))
             } else {
                 None
             },
-            grant_read: if grant_read_vec.len() > 0 {
+            grant_read: if !grant_read_vec.is_empty() {
                 Some(grant_read_vec.join(", "))
             } else {
                 None
             },
-            grant_read_acp: if grant_read_acp_vec.len() > 0 {
+            grant_read_acp: if !grant_read_acp_vec.is_empty() {
                 Some(grant_read_acp_vec.join(", "))
             } else {
                 None
             },
-            grant_write_acp: if grant_write_acp_vec.len() > 0 {
+            grant_write_acp: if !grant_write_acp_vec.is_empty() {
                 Some(grant_write_acp_vec.join(", "))
             } else {
                 None
