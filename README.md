@@ -38,6 +38,7 @@ FLAGS:
         --no-preserve-acl           Do not preserve Object ACL settings (all will be set to private)
         --no-preserve-properties    Do not preserve object properties (saves retrieving per-object details) - using this
                                     flag will remove any encryption
+        --no-overwrite              Do not overwrite existing keys
     -q, --quiet                     Do not print key modifications
     -V, --version                   Prints version information
     -v, --verbose                   Print debug messages

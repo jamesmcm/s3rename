@@ -161,6 +161,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let dry_run = opt.dry_run;
         let no_preserve_properties = opt.no_preserve_properties;
         let no_preserve_acl = opt.no_preserve_acl;
+        let no_overwrite = opt.no_overwrite;
         let new_canned_acl = canned_acl.clone();
         futures.push(tokio::spawn(handle_key(
             newclient,
@@ -170,6 +171,7 @@ async fn main() -> Result<(), anyhow::Error> {
             dry_run,
             no_preserve_properties,
             no_preserve_acl,
+            no_overwrite,
             new_canned_acl,
             new_destructor_futures.clone(),
         )));
@@ -191,6 +193,7 @@ async fn handle_key(
     dry_run: bool,
     no_preserve_properties: bool,
     no_preserve_acl: bool,
+    no_overwrite: bool,
     canned_acl: Arc<Option<CannedACL>>,
     destructor_futures: Arc<Mutex<futures::stream::FuturesUnordered<tokio::task::JoinHandle<()>>>>,
 ) -> Result<(), anyhow::Error> {
@@ -198,6 +201,28 @@ async fn handle_key(
     if newkey == key.0 {
         debug!("Skipping {:?} since key did not change", key);
         return Ok(());
+    }
+    if no_overwrite {
+        let head_request = HeadObjectRequest {
+                bucket: (*bucket).to_string(),
+                if_match: None,
+                if_modified_since: None,
+                if_none_match: None,
+                if_unmodified_since: None,
+                key: String::from(newkey.to_owned()),
+                part_number: None,
+                range: None,
+                request_payer: None,
+                sse_customer_algorithm: None, // Cannot be empty if using sse-c
+                sse_customer_key: None,
+                sse_customer_key_md5: None,
+                version_id: None,
+        };
+        let head_result = client.head_object(head_request).await?;
+        if head_result.metadata.is_some() {
+            debug!("Skipping {:?} since this would result in overwriting", newkey);
+            return Ok(());
+        }
     }
     info!("Renaming {} to {}", key.0, newkey);
     if dry_run {

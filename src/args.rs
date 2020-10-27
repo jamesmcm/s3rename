@@ -135,4 +135,8 @@ pub struct App {
     /// keys containing backslashes
     #[structopt(long)]
     pub no_anonymous_groups: bool,
+
+    /// Skip keys that would result in an overwrite
+    #[structopt(long)]
+    pub no_overwrite: bool,
 }
