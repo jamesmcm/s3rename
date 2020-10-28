@@ -218,10 +218,12 @@ async fn handle_key(
             sse_customer_key_md5: None,
             version_id: None,
         };
-        let head_result = client.head_object(head_request).await?;
-        if head_result.metadata.is_some() {
-            debug!("Skipping {} since this would result in overwriting", newkey);
-            return Ok(());
+        let head_result = client.head_object(head_request).await;
+        if let Ok(head_result) = head_result {
+            if head_result.metadata.is_some() {
+                debug!("Skipping {} since this would result in overwriting", newkey);
+                return Ok(());
+            }
         }
     }
     info!("Renaming {} to {}", key.0, newkey);
