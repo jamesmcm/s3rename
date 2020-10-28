@@ -220,7 +220,10 @@ async fn handle_key(
         };
         let head_result = client.head_object(head_request).await?;
         if head_result.metadata.is_some() {
-            debug!("Skipping {:?} since this would result in overwriting", newkey);
+            debug!(
+                "Skipping {} since this would result in overwriting", 
+                newkey
+            );
             return Ok(());
         }
     }
