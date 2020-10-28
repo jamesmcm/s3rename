@@ -204,26 +204,23 @@ async fn handle_key(
     }
     if no_overwrite {
         let head_request = HeadObjectRequest {
-                bucket: (*bucket).to_string(),
-                if_match: None,
-                if_modified_since: None,
-                if_none_match: None,
-                if_unmodified_since: None,
-                key: String::from(newkey.to_owned()),
-                part_number: None,
-                range: None,
-                request_payer: None,
-                sse_customer_algorithm: None, // Cannot be empty if using sse-c
-                sse_customer_key: None,
-                sse_customer_key_md5: None,
-                version_id: None,
+            bucket: (*bucket).to_string(),
+            if_match: None,
+            if_modified_since: None,
+            if_none_match: None,
+            if_unmodified_since: None,
+            key: String::from(newkey.to_owned()),
+            part_number: None,
+            range: None,
+            request_payer: None,
+            sse_customer_algorithm: None, // Cannot be empty if using sse-c
+            sse_customer_key: None,
+            sse_customer_key_md5: None,
+            version_id: None,
         };
         let head_result = client.head_object(head_request).await?;
         if head_result.metadata.is_some() {
-            debug!(
-                "Skipping {} since this would result in overwriting", 
-                newkey
-            );
+            debug!("Skipping {} since this would result in overwriting", newkey);
             return Ok(());
         }
     }
